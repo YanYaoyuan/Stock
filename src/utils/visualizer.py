@@ -23,7 +23,8 @@ _ZH_FONT_FOUND = False
 try:
     import matplotlib.font_manager as fm
     _zh_candidates = ['WenQuanYi Micro Hei', 'SimHei', 'Noto Sans CJK SC',
-                      'Source Han Sans SC', 'Microsoft YaHei', 'PingFang SC']
+                      'Source Han Sans SC', 'Microsoft YaHei', 'PingFang SC',
+                      'Noto Sans SC']
     _available = {f.name for f in fm.fontManager.ttflist}
     for _fc in _zh_candidates:
         if _fc in _available:
@@ -187,7 +188,7 @@ def _plot_equity_curve(dates, total_values, cash_values, pos_values,
                      alpha=0.15, color=COLORS['purple'], label=_t('持仓','Position'))
 
     ax1.axhline(y=0, color=COLORS['grid'], linewidth=0.5, alpha=0.5)
-    ax1.set_title(f'🦞 {pool_name} {_t("权益曲线","Equity Curve")}', fontsize=14, color=COLORS['text'], pad=10)
+    ax1.set_title(f'[{pool_name}] {_t("权益曲线","Equity Curve")}', fontsize=14, color=COLORS['text'], pad=10)
     ax1.set_ylabel(_t('收益率 (%)','Return (%)'), color=COLORS['text'])
     ax1.legend(loc='upper left', fontsize=9, framealpha=0.3)
     ax1.grid(True, alpha=0.15, color=COLORS['grid'])
@@ -327,7 +328,7 @@ def _plot_dashboard(stats, pool_name, start_date, end_date, initial_cash, save_p
     ax.axis('off')
 
     # 标题
-    ax.text(0.5, 0.95, f'🦞 {_t("龙虾量化回测仪表盘","Lobster Quant Dashboard")}', fontsize=18, color=COLORS['accent'],
+    ax.text(0.5, 0.95, f'[{_t("龙虾量化","Lobster Quant")}] {_t("回测仪表盘","Backtest Dashboard")}', fontsize=18, color=COLORS['accent'],
             ha='center', va='top', fontweight='bold',
             transform=ax.transAxes)
     ax.text(0.5, 0.89, f'{pool_name} | {start_date} ~ {end_date}',
