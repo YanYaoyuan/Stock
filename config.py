@@ -35,5 +35,13 @@ COMMISSION = 0.0003         # 佣金 (万三)
 STAMP_TAX = 0.001           # 印花税 (千一, 仅卖出)
 SLIPPAGE = 0.001            # 滑点 (0.1%)
 
+# ==================== 情绪/新闻因子 ====================
+SENTIMENT_ENABLED = True          # 是否启用情绪因子
+MARKET_SENTIMENT_MIN = -0.2       # 市场整体情绪低于此值不开仓
+STOCK_SENTIMENT_MIN = -0.3        # 个股情绪低于此值不买入
+STOCK_SENTIMENT_BOOST = 0.3       # 个股情绪高于此值给买入加分
+NEWS_CHECK_ENABLED = True         # 是否检查个股新闻
+NEWS_NEGATIVE_THRESHOLD = 3       # 负面新闻数超过此值跳过该股
+
 # ==================== 输出 ====================
 OUTPUT_DIR = "./output"

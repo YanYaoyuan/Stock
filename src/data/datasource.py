@@ -46,7 +46,7 @@ class BaostockDataSource:
         """获取日K线数据(前复权, 含PE/PB)"""
         rs = bs.query_history_k_data_plus(
             code,
-            "date,open,high,low,close,volume,peTTM,pbMRQ,isST",
+            "date,open,high,low,close,volume,pctChg,peTTM,pbMRQ,isST",
             start_date=start_date, end_date=end_date,
             frequency="d", adjustflag="2"
         )
@@ -58,7 +58,7 @@ class BaostockDataSource:
             return None
         
         df = pd.DataFrame(rows, columns=rs.fields)
-        for c in ['open', 'high', 'low', 'close', 'volume', 'peTTM', 'pbMRQ']:
+        for c in ['open', 'high', 'low', 'close', 'volume', 'peTTM', 'pbMRQ', 'pctChg']:
             df[c] = pd.to_numeric(df[c], errors='coerce')
         df['date'] = pd.to_datetime(df['date'])
         # 过滤ST股 (isST=0是正常股)
