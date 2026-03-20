@@ -137,20 +137,52 @@ class BacktestEngine:
                     del positions[code]
 
             # === 买入检查 ===
-            if len(positions) >= cfg.MAX_POSITIONS:
-                pass
-            else:
+            if len(positions) < cfg.MAX_POSITIONS:
                 # 市场情绪过滤
+                can_buy = True
                 if self.sentiment_enabled and market_sentiment is not None:
                     market_min = getattr(cfg, 'MARKET_SENTIMENT_MIN', -0.2)
                     if market_sentiment < market_min:
-                        # 市场情绪差，不开新仓 (已有持仓照常管)
-                        pass
-                    else:
-                        self._try_buy(date, data, positions, cash)
-                        # cash 可能被修改，从positions推算
-                else:
-                    self._try_buy(date, data, positions, cash)
+                        can_buy = False
+
+                if can_buy:
+                    # 按因子分排序优先买入高分股票 (如果有因子分)
+                    buy_candidates = []
+                    for code, info in data.items():
+                        if code in positions:
+                            continue
+                        df_info = info['df']
+                        if date not in df_info.index:
+                            continue
+                        row = df_info.loc[date]
+                        if isinstance(row, pd.DataFrame):
+                            continue
+                        ok, reason = self._check_buy(row, code, date)
+                        if ok:
+                            score = info.get('factor_score') or 0
+                            buy_candidates.append((score, code, info, row))
+
+                    # 因子分高的优先买
+                    buy_candidates.sort(key=lambda x: x[0], reverse=True)
+                    for score, code, info, row in buy_candidates:
+                        if len(positions) >= cfg.MAX_POSITIONS:
+                            break
+                        buy_price = row['close'] * (1 + cfg.SLIPPAGE)
+                        avail = cash * cfg.POSITION_PCT
+                        shares = int(avail / buy_price / 100) * 100
+                        if shares < 100:
+                            continue
+                        cost = buy_price * shares * (1 + cfg.COMMISSION)
+                        if cost > cash:
+                            continue
+                        cash -= cost
+                        positions[code] = {
+                            'entry_price': buy_price, 'highest': buy_price,
+                            'hold_days': 0, 'shares': shares,
+                            'buy_date': date, 'cost': cost,
+                            'roe': info.get('roe'), 'growth': info.get('growth'),
+                            'buy_sentiment': self.sentiment_cache.get_sentiment(code, date) if self.sentiment_enabled else None,
+                        }
 
             # === 每日净值 ===
             pos_val = 0
@@ -169,44 +201,6 @@ class BacktestEngine:
 
         stats = self._analyze(trades, daily_values, cash)
         return trades, daily_values, stats
-
-    def _try_buy(self, date, data, positions, cash):
-        """尝试买入 (内部方法，直接操作positions dict，cash通过引用处理)"""
-        cfg = self.cfg
-        for code, info in data.items():
-            if code in positions:
-                continue
-            if len(positions) >= cfg.MAX_POSITIONS:
-                break
-
-            df = info['df']
-            if date not in df.index:
-                continue
-            row = df.loc[date]
-            if isinstance(row, pd.DataFrame):
-                continue
-
-            ok, reason = self._check_buy(row, code, date)
-            if not ok:
-                continue
-
-            buy_price = row['close'] * (1 + cfg.SLIPPAGE)
-            avail = cash * cfg.POSITION_PCT
-            shares = int(avail / buy_price / 100) * 100
-            if shares < 100:
-                continue
-            cost = buy_price * shares * (1 + cfg.COMMISSION)
-            if cost > cash:
-                continue
-
-            cash -= cost
-            positions[code] = {
-                'entry_price': buy_price, 'highest': buy_price,
-                'hold_days': 0, 'shares': shares,
-                'buy_date': date, 'cost': cost,
-                'roe': info.get('roe'), 'growth': info.get('growth'),
-                'buy_sentiment': self.sentiment_cache.get_sentiment(code, date) if self.sentiment_enabled else None,
-            }
 
     def _check_buy(self, row, code=None, date=None):
         """买入信号: 估值 + 技术面 + 量价情绪 + 可选新闻情绪"""

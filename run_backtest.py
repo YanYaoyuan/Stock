@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
-🦞 龙虾量化 — 回测入口
+🦞 龙虾量化 — 回测入口 (四因子: 基本面+技术面+情绪+因子预处理)
 用法:
   python run_backtest.py                                                    # 默认沪深300, 2020-2025
   python run_backtest.py --pool zz500 --start 2022-01-01                   # 自定义参数
+  python run_backtest.py --factor-preprocess                                # 启用因子预处理
   python run_backtest.py --sentiment --sentiment-cache data/sentiment.csv  # 开启情绪因子
-  python run_backtest.py --sentiment                                        # 无cache, 优雅降级
+  python run_backtest.py --factor-preprocess --sentiment --sentiment-cache data/sentiment.csv  # 全开
 """
 
 import sys
@@ -64,6 +65,12 @@ def main():
     parser.add_argument('--end', type=str, default='2025-12-31')
     parser.add_argument('--cash', type=float, default=100000)
     parser.add_argument('--output', type=str, default=None)
+    parser.add_argument('--factor-preprocess', action='store_true',
+                        help='启用因子预处理 (去极值→行业中性化→Z-Score)')
+    parser.add_argument('--factor-min-score', type=float, default=0.0,
+                        help='因子得分最低门槛 (默认0.0, 取前50%%)')
+    parser.add_argument('--factor-top-pct', type=float, default=0.5,
+                        help='取因子分Top N%%的股票送入回测 (默认50%%)')
     parser.add_argument('--sentiment', action='store_true', help='启用情绪因子')
     parser.add_argument('--sentiment-cache', type=str, default=None,
                         help='历史情绪数据文件路径 (CSV格式)')
@@ -107,20 +114,24 @@ def main():
         else:
             log.warning("⚠️ 回测模式需提供 --sentiment-cache 文件来加载历史情绪数据")
             log.warning("   情绪因子已自动禁用 (回测无法实时抓取新闻)")
-            log.warning("   如需生成模板: python -c \"from src.utils.sentiment_cache import SentimentDataCache; SentimentDataCache.generate_template()\"")
             sentiment_mode = "off (no cache)"
 
+    # 打印策略信息
+    features = []
+    features.append(f"ROE>{ROE_MIN*100:.0f}%或增长>{PROFIT_GROWTH_MIN*100:.0f}%")
+    if args.factor_preprocess:
+        features.append(f"因子预处理(Top{args.factor_top_pct*100:.0f}%)")
+    features.append("MA多头+MACD+RSI")
+    if sentiment_cache:
+        features.append("情绪")
+    feature_str = " | ".join(features)
+
     log.info("=" * 70)
-    log.info("🦞 龙虾 A股量化交易系统")
+    log.info("🦞 龙虾 A股量化交易系统 — 四因子策略")
     log.info("=" * 70)
-    log.info(f"   选股: ROE>{ROE_MIN*100:.0f}% 或 增长>{PROFIT_GROWTH_MIN*100:.0f}%")
-    log.info(f"   择时: MA多头 + MACD + RSI 30-65 + 放量")
+    log.info(f"   因子链: {feature_str}")
     log.info(f"   风控: 止损{STOP_LOSS*100}% | 止盈{TAKE_PROFIT*100}% | 移动止损{TRAILING_STOP*100}% | 时间{MAX_HOLD_DAYS}天")
     log.info(f"   区间: {args.start} ~ {args.end} | 资金: ¥{args.cash:,.0f}")
-    if sentiment_cache:
-        log.info(f"   情绪: 已启用 ({sentiment_mode})")
-    else:
-        log.info(f"   情绪: 未启用")
     log.info("=" * 70)
 
     cfg = Config()
@@ -130,15 +141,48 @@ def main():
         pool = ds.get_stock_pool(args.pool)
         log.info(f"   股票池: {args.pool} ({len(pool)}只)")
 
-        # Step 2: 基本面选股
+        # Step 2: 获取行业分类 (因子预处理用)
+        industry_map = None
+        if args.factor_preprocess:
+            from src.utils.factor_preprocess import get_industry_map_from_codes
+            codes = [s['code'] for s in pool]
+            industry_map = get_industry_map_from_codes(codes, ds)
+
+        # Step 3: 基本面选股 + 因子预处理
         screener = StockScreener(ds, cfg)
-        screened = screener.screen(pool)
+        screened = screener.screen(
+            pool,
+            use_factor_preprocess=args.factor_preprocess,
+            industry_map=industry_map,
+        )
 
         if not screened:
             log.error("❌ 选股通过为0，无法回测")
             return
 
-        # Step 3: 下载K线 + 计算指标
+        # Step 4: 因子分筛选 (取Top N%)
+        if args.factor_preprocess:
+            before_count = len(screened)
+            # 按因子分降序排列 (已在screener中排好)
+            top_n = max(10, int(len(screened) * args.factor_top_pct))
+            # 过滤掉因子分低于阈值的
+            filtered = [s for s in screened if (s.get('factor_score') is not None
+                        and s['factor_score'] >= args.factor_min_score)]
+            filtered = filtered[:top_n]
+
+            log.info(f"   因子筛选: {before_count} → {len(filtered)} "
+                     f"(Top{args.factor_top_pct*100:.0f}%, 分≥{args.factor_min_score})")
+
+            if filtered:
+                log.info(f"      Top5: " + ", ".join(
+                    f"{s['name']}({s['factor_score']:.2f})" for s in filtered[:5]))
+            screened = filtered
+
+            if not screened:
+                log.error("❌ 因子筛选后为0，无法回测")
+                return
+
+        # Step 5: 下载K线 + 计算指标
         log.info(f"📈 下载K线数据...")
         stock_data = []
         for i, s in enumerate(screened):
@@ -151,6 +195,7 @@ def main():
                     stock_data.append({
                         'code': s['code'], 'name': s['name'],
                         'roe': s['roe'], 'growth': s['growth'],
+                        'factor_score': s.get('factor_score'),
                         'df': df,
                     })
             except Exception as e:
@@ -162,13 +207,17 @@ def main():
             log.error("❌ 无K线数据")
             return
 
-        # Step 4: 回测
+        # Step 6: 回测
         engine = BacktestEngine(cfg, sentiment_cache=sentiment_cache)
         trades, daily_values, stats = engine.run(stock_data, args.start, args.end, args.cash)
 
     # 打印结果
     print(f"\n{'='*70}")
     print(f"🦞 回测结果 — {args.pool}")
+    if args.factor_preprocess:
+        print(f"   📐 因子预处理: ✅ (Top{args.factor_top_pct*100:.0f}%)")
+    if sentiment_cache:
+        print(f"   📰 情绪因子: ✅")
     print(f"{'='*70}")
     print(f"   初始资金: ¥{args.cash:,.0f}")
     print(f"   最终权益: ¥{stats['final_value']:,.0f}")
@@ -180,10 +229,6 @@ def main():
     print(f"   胜率: {stats['win_rate']:.1f}%")
     print(f"   盈亏比: {stats['profit_factor']:.2f}")
     print(f"   平均持仓: {stats['avg_hold']:.1f}天")
-    if sentiment_cache:
-        print(f"   情绪因子: ✅ 已启用")
-    else:
-        print(f"   情绪因子: ❌ 未启用")
     print(f"{'='*70}")
 
     if trades:

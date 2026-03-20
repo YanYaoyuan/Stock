@@ -18,8 +18,28 @@ import matplotlib.dates as mdates
 from matplotlib.patches import FancyBboxPatch
 from matplotlib.gridspec import GridSpec
 
-# 中文字体支持
-plt.rcParams['font.sans-serif'] = ['WenQuanYi Micro Hei', 'SimHei', 'DejaVu Sans']
+# 中文字体: 优先使用系统CJK字体, 没有则用英文替代
+_ZH_FONT_FOUND = False
+try:
+    import matplotlib.font_manager as fm
+    _zh_candidates = ['WenQuanYi Micro Hei', 'SimHei', 'Noto Sans CJK SC',
+                      'Source Han Sans SC', 'Microsoft YaHei', 'PingFang SC']
+    _available = {f.name for f in fm.fontManager.ttflist}
+    for _fc in _zh_candidates:
+        if _fc in _available:
+            plt.rcParams['font.sans-serif'] = [_fc] + plt.rcParams['font.sans-serif']
+            _ZH_FONT_FOUND = True
+            break
+    # 也检查用户目录手动安装的字体
+    if not _ZH_FONT_FOUND:
+        fm._load_fontmanager(try_read_cache=False)
+        for f in fm.fontManager.ttflist:
+            if 'CJK' in f.name or 'Han' in f.name or 'Hei' in f.name or 'SimHei' in f.name:
+                plt.rcParams['font.sans-serif'] = [f.name] + plt.rcParams['font.sans-serif']
+                _ZH_FONT_FOUND = True
+                break
+except Exception:
+    pass
 plt.rcParams['axes.unicode_minus'] = False
 
 log = logging.getLogger(__name__)
@@ -39,6 +59,13 @@ COLORS = {
     'loss': '#ff1744',
     'accent': '#ffd740',
 }
+
+# 中英文映射 (无CJK字体时用英文)
+_ZH = _ZH_FONT_FOUND
+
+def _t(zh, en):
+    """根据是否有中文字体返回中文或英文"""
+    return zh if _ZH else en
 
 
 def set_dark_style():
@@ -144,24 +171,24 @@ def _plot_equity_curve(dates, total_values, cash_values, pos_values,
     # 策略净值
     equity_pct = [(v / initial_cash - 1) * 100 for v in total_values]
     ax1.plot(dates, equity_pct, color=COLORS['green'], linewidth=1.5,
-             label=f'策略 ({stats["total_return"]:+.1f}%)', alpha=0.9)
+             label=f'{_t("策略","Strategy")} ({stats["total_return"]:+.1f}%)', alpha=0.9)
 
     # 基准净值
     if benchmark_values and len(benchmark_values) == len(dates):
         bench_pct = [(v / benchmark_values[0] - 1) * 100 for v in benchmark_values]
         ax1.plot(dates, bench_pct, color=COLORS['orange'], linewidth=1.2,
-                 label='基准 (沪深300)', alpha=0.7, linestyle='--')
+                 label=f'{_t("基准 (沪深300)","Benchmark (HS300)")}', alpha=0.7, linestyle='--')
 
     # 现金 vs 持仓
     cash_pct = [(c / initial_cash) * 100 for c in cash_values]
     pos_pct = [(p / initial_cash) * 100 for p in pos_values]
-    ax1.fill_between(dates, 0, cash_pct, alpha=0.15, color=COLORS['blue'], label='现金')
+    ax1.fill_between(dates, 0, cash_pct, alpha=0.15, color=COLORS['blue'], label=_t('现金','Cash'))
     ax1.fill_between(dates, cash_pct, [c + p for c, p in zip(cash_pct, pos_pct)],
-                     alpha=0.15, color=COLORS['purple'], label='持仓')
+                     alpha=0.15, color=COLORS['purple'], label=_t('持仓','Position'))
 
     ax1.axhline(y=0, color=COLORS['grid'], linewidth=0.5, alpha=0.5)
-    ax1.set_title(f'🦞 {pool_name} 权益曲线', fontsize=14, color=COLORS['text'], pad=10)
-    ax1.set_ylabel('收益率 (%)', color=COLORS['text'])
+    ax1.set_title(f'🦞 {pool_name} {_t("权益曲线","Equity Curve")}', fontsize=14, color=COLORS['text'], pad=10)
+    ax1.set_ylabel(_t('收益率 (%)','Return (%)'), color=COLORS['text'])
     ax1.legend(loc='upper left', fontsize=9, framealpha=0.3)
     ax1.grid(True, alpha=0.15, color=COLORS['grid'])
     ax1.tick_params(colors=COLORS['text'])
@@ -180,7 +207,7 @@ def _plot_equity_curve(dates, total_values, cash_values, pos_values,
 
     ax2.fill_between(dates, drawdowns, 0, alpha=0.6, color=COLORS['red'])
     ax2.plot(dates, drawdowns, color=COLORS['red'], linewidth=0.8, alpha=0.8)
-    ax2.set_ylabel('回撤 (%)', color=COLORS['text'])
+    ax2.set_ylabel(_t('回撤 (%)','Drawdown (%)'), color=COLORS['text'])
     ax2.set_xlabel('')
     ax2.grid(True, alpha=0.15, color=COLORS['grid'])
     ax2.tick_params(colors=COLORS['text'])
@@ -192,7 +219,7 @@ def _plot_equity_curve(dates, total_values, cash_values, pos_values,
     # 标注最大回撤
     max_dd_idx = np.argmax(drawdowns)
     if drawdowns[max_dd_idx] > 1:
-        ax2.annotate(f'最大回撤: {drawdowns[max_dd_idx]:.1f}%',
+        ax2.annotate(f'{_t("最大回撤","Max DD")}: {drawdowns[max_dd_idx]:.1f}%',
                      xy=(dates[max_dd_idx], drawdowns[max_dd_idx]),
                      xytext=(dates[max_dd_idx], drawdowns[max_dd_idx] - 3),
                      fontsize=9, color=COLORS['red'],
@@ -227,9 +254,9 @@ def _plot_trade_analysis(trades, dates, total_values, initial_cash, save_path):
             patch.set_alpha(0.7)
 
     ax1.axvline(x=0, color=COLORS['text'], linewidth=0.5, alpha=0.5)
-    ax1.set_title('交易盈亏分布 (%)', color=COLORS['text'], fontsize=11)
-    ax1.set_xlabel('收益率 (%)', color=COLORS['text'])
-    ax1.set_ylabel('次数', color=COLORS['text'])
+    ax1.set_title(_t('交易盈亏分布 (%)','P&L Distribution (%)'), color=COLORS['text'], fontsize=11)
+    ax1.set_xlabel(_t('收益率 (%)','Return (%)'), color=COLORS['text'])
+    ax1.set_ylabel(_t('次数','Count'), color=COLORS['text'])
     ax1.grid(True, alpha=0.15, color=COLORS['grid'])
     ax1.tick_params(colors=COLORS['text'])
 
@@ -244,9 +271,9 @@ def _plot_trade_analysis(trades, dates, total_values, initial_cash, save_path):
         ax2.scatter(hold_days, pnl_pcts, c=colors_scatter, alpha=0.6, s=20, edgecolors='none')
 
     ax2.axhline(y=0, color=COLORS['text'], linewidth=0.5, alpha=0.5)
-    ax2.set_title('持仓时长 vs 收益', color=COLORS['text'], fontsize=11)
-    ax2.set_xlabel('持仓天数', color=COLORS['text'])
-    ax2.set_ylabel('收益率 (%)', color=COLORS['text'])
+    ax2.set_title(_t('持仓时长 vs 收益','Hold Days vs Return'), color=COLORS['text'], fontsize=11)
+    ax2.set_xlabel(_t('持仓天数','Days'), color=COLORS['text'])
+    ax2.set_ylabel(_t('收益率 (%)','Return (%)'), color=COLORS['text'])
     ax2.grid(True, alpha=0.15, color=COLORS['grid'])
     ax2.tick_params(colors=COLORS['text'])
 
@@ -280,9 +307,9 @@ def _plot_trade_analysis(trades, dates, total_values, initial_cash, save_path):
         ax3.set_xticklabels(tick_labels, rotation=45, fontsize=8)
 
     ax3.axhline(y=0, color=COLORS['text'], linewidth=0.5, alpha=0.5)
-    ax3.set_title('月度盈亏 (¥)', color=COLORS['text'], fontsize=11)
+    ax3.set_title(_t('月度盈亏','Monthly P&L'), color=COLORS['text'], fontsize=11)
     ax3.set_xlabel('')
-    ax3.set_ylabel('盈亏 (¥)', color=COLORS['text'])
+    ax3.set_ylabel(_t('盈亏 (¥)','P&L (¥)'), color=COLORS['text'])
     ax3.grid(True, alpha=0.15, color=COLORS['grid'], axis='y')
     ax3.tick_params(colors=COLORS['text'])
 
@@ -300,7 +327,7 @@ def _plot_dashboard(stats, pool_name, start_date, end_date, initial_cash, save_p
     ax.axis('off')
 
     # 标题
-    ax.text(0.5, 0.95, f'🦞 龙虾量化回测仪表盘', fontsize=18, color=COLORS['accent'],
+    ax.text(0.5, 0.95, f'🦞 {_t("龙虾量化回测仪表盘","Lobster Quant Dashboard")}', fontsize=18, color=COLORS['accent'],
             ha='center', va='top', fontweight='bold',
             transform=ax.transAxes)
     ax.text(0.5, 0.89, f'{pool_name} | {start_date} ~ {end_date}',
@@ -309,23 +336,23 @@ def _plot_dashboard(stats, pool_name, start_date, end_date, initial_cash, save_p
 
     # 指标卡片
     metrics = [
-        ('总收益率', f"{stats['total_return']:+.2f}%",
+        (_t('总收益率','Total Return'), f"{stats['total_return']:+.2f}%",
          COLORS['green'] if stats['total_return'] >= 0 else COLORS['red']),
-        ('年化收益', f"{stats['annual_return']:+.2f}%",
+        (_t('年化收益','Annual Return'), f"{stats['annual_return']:+.2f}%",
          COLORS['green'] if stats['annual_return'] >= 0 else COLORS['red']),
         ('Sharpe', f"{stats['sharpe']:.2f}",
          COLORS['green'] if stats['sharpe'] >= 1 else (COLORS['orange'] if stats['sharpe'] >= 0.5 else COLORS['red'])),
-        ('最大回撤', f"{stats['max_drawdown']:.2f}%",
+        (_t('最大回撤','Max Drawdown'), f"{stats['max_drawdown']:.2f}%",
          COLORS['green'] if stats['max_drawdown'] < 15 else (COLORS['orange'] if stats['max_drawdown'] < 25 else COLORS['red'])),
-        ('胜率', f"{stats['win_rate']:.1f}%",
+        (_t('胜率','Win Rate'), f"{stats['win_rate']:.1f}%",
          COLORS['green'] if stats['win_rate'] >= 55 else (COLORS['orange'] if stats['win_rate'] >= 45 else COLORS['red'])),
-        ('盈亏比', f"{stats['profit_factor']:.2f}",
+        (_t('盈亏比','Profit Factor'), f"{stats['profit_factor']:.2f}",
          COLORS['green'] if stats['profit_factor'] >= 1.5 else (COLORS['orange'] if stats['profit_factor'] >= 1.0 else COLORS['red'])),
-        ('总交易', f"{stats['total_trades']}笔",
+        (_t('总交易','Total Trades'), f"{stats['total_trades']}",
          COLORS['blue']),
-        ('最终权益', f"¥{stats['final_value']:,.0f}",
+        (_t('最终权益','Final Equity'), f"¥{stats['final_value']:,.0f}",
          COLORS['green'] if stats['final_value'] >= initial_cash else COLORS['red']),
-        ('平均持仓', f"{stats['avg_hold']:.1f}天",
+        (_t('平均持仓','Avg Hold Days'), f"{stats['avg_hold']:.1f}",
          COLORS['blue']),
     ]
 
@@ -376,15 +403,15 @@ def _plot_dashboard(stats, pool_name, start_date, end_date, initial_cash, save_p
     elif stats['profit_factor'] > 1.0: score += 1
 
     if score >= 8:
-        grade, grade_color = '⭐ 优秀', COLORS['green']
+        grade, grade_color = _t('⭐ 优秀','⭐ Excellent'), COLORS['green']
     elif score >= 5:
-        grade, grade_color = '👍 良好', COLORS['blue']
+        grade, grade_color = _t('👍 良好','👍 Good'), COLORS['blue']
     elif score >= 3:
-        grade, grade_color = '😐 一般', COLORS['orange']
+        grade, grade_color = _t('😐 一般','😐 Average'), COLORS['orange']
     else:
-        grade, grade_color = '❌ 较差', COLORS['red']
+        grade, grade_color = _t('❌ 较差','❌ Poor'), COLORS['red']
 
-    ax.text(0.5, 0.08, f'综合评级: {grade} ({score}/9)',
+    ax.text(0.5, 0.08, f'{_t("综合评级","Rating")}: {grade} ({score}/9)',
             fontsize=14, color=grade_color, ha='center', va='center',
             transform=ax.transAxes, fontweight='bold')
 
@@ -417,7 +444,7 @@ def _plot_screener(stocks, save_path):
     ax1.set_yticks(y_pos)
     ax1.set_yticklabels(names, fontsize=9)
     ax1.set_xlabel('%', color=COLORS['text'])
-    ax1.set_title('基本面评分 Top 30', color=COLORS['text'], fontsize=12)
+    ax1.set_title(f'{_t("基本面评分","Fundamental Score")} Top 30', color=COLORS['text'], fontsize=12)
     ax1.legend(loc='lower right', fontsize=9)
     ax1.tick_params(colors=COLORS['text'])
     ax1.grid(True, alpha=0.15, color=COLORS['grid'], axis='x')
@@ -431,8 +458,8 @@ def _plot_screener(stocks, save_path):
     ax2.barh(y_pos, sentiments, height=0.6, color=sent_colors, alpha=0.8)
     ax2.set_yticks(y_pos)
     ax2.set_yticklabels(names, fontsize=9)
-    ax2.set_xlabel('情绪分数', color=COLORS['text'])
-    ax2.set_title('新闻情绪评分', color=COLORS['text'], fontsize=12)
+    ax2.set_xlabel(_t('情绪分数','Sentiment Score'), color=COLORS['text'])
+    ax2.set_title(_t('新闻情绪评分','News Sentiment'), color=COLORS['text'], fontsize=12)
     ax2.axvline(x=0, color=COLORS['text'], linewidth=0.5, alpha=0.5)
     ax2.tick_params(colors=COLORS['text'])
     ax2.grid(True, alpha=0.15, color=COLORS['grid'], axis='x')
